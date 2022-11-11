@@ -46,3 +46,4 @@ sudo apt-get install v4l-utils
 ```
 python3 realtime_waggledecoding_jetson.py 15 --loop 4 # Execute 15 min decoding and repeat 4 times (1 h)
 ```
+Use `-h` to see options for setting hive location, threshold value, camera resolution and resize ratio, etc.
