@@ -34,7 +34,7 @@ python3 -m pip install folium
 ```
 ### Install GDAL
 ```
-sudo apt-get install gdal-bin
+sudo apt-get install gdal-bin # not necessary?
 sudo apt-get install python3-gdal
 ```
 ### Install UVC camera controllor
