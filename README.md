@@ -1,6 +1,6 @@
 # Real-time waggle decoding on NVIDIA Jetson
 
-## Environment
+## Environments
 
 - NVIDIA Jetson Nano - Jetpack 4.6 [L4T 32.61]
 
