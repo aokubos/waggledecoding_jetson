@@ -42,7 +42,7 @@ sudo apt-get install python3-gdal
 sudo apt-get install v4l-utils
 ```
 
-## Run options
+## Run
 ```
-python3 
+python3 realtime_waggledecoding_jetson.py 15 --loop 4 # Execute 15 min decoding and repeat 4 times (1 h)
 ```
