@@ -1,4 +1,4 @@
-# Real-time waggle decoding system of honeybees on NVIDIA Jetson
+# Real-time waggle decoding on NVIDIA Jetson
 
 ## Environment
 
@@ -40,4 +40,9 @@ sudo apt-get install python3-gdal
 ### Install UVC camera controllor
 ```
 sudo apt-get install v4l-utils
+```
+
+## Run options
+```
+python3 
 ```
