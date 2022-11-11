@@ -24,7 +24,6 @@ def get_args():
     parser.add_argument("--rs", type=float, default=7.5, help="resize ratio of input to analyzing resolution")
     parser.add_argument("--lat", type=float, default=36.020635, help="latitude of the recording site in degree")
     parser.add_argument("--lon", type=float, default=140.120258, help="longititude of the recording site in degree")
-    parser.add_argument("--video", type=str, default="video", help="prefix of output video file name")
     parser.add_argument("--prefix", type=str, default="result", help="prefix output result file name")
     parser.add_argument("--peakcut", type=float, default=8.0, help="peak cut threshold for filtering waggle candidates")
 
@@ -41,40 +40,26 @@ def gst_pipeline():
     ))
 
 
-def gst_out(fvideoname):
-    return(
-        "appsrc ! "
-        "nvvidconv ! " 
-        "queue ! nvv4l2h264enc bitrate=8000000 ! h264parse ! qtmux ! "
-        "filesink location=%s"
-    % (
-        fvideoname
-    ))
-
-
-#ピクセル単位でフーリエ変換してダンス周波数帯に極大値があるピクセルを抽出
+#Pixcel-based FFT and detect waggle candidates
 def calc_fft():
     res[:] = 0
-    dat_gpu = cp.asarray(dat) # GPUにデータアップ
-    F = cupyx.scipy.fftpack.fft(dat_gpu, axis = 0, plan = plan) # テンプレートを使ってフーリエ変換
-    F_abs = cp.abs(F) # 複素数 ->絶対値に変換
-    F_abs = F_abs / (N/2) # 振幅を元の信号のスケールに揃える
-    # FFTデータからピークを自動検出
-    F_abs_cpu = cp.asnumpy(F_abs) # CPUへデータダウン
-    maximal_idx, maximal_idy = signal.argrelmax(F_abs_cpu, axis=0, order=1) # ピーク（極大値）のインデックス取得
+    dat_gpu = cp.asarray(dat)
+    F = cupyx.scipy.fftpack.fft(dat_gpu, axis = 0, plan = plan)
+    F_abs = cp.abs(F)
+    F_abs = F_abs / (N/2)
+    F_abs_cpu = cp.asnumpy(F_abs)
+    maximal_idx, maximal_idy = signal.argrelmax(F_abs_cpu, axis=0, order=1)
     temp = np.zeros((N,rswidth*rsheight))
-    temp[maximal_idx,maximal_idy] = 1 # ピークのある部分にフラグ
-    temp = np.where(F_abs_cpu>peak_cut,1,0)*temp # 基準値（peakcut値）より大きい部分のみ抽出
-    temp2 = temp[(minfreq_idx-1):(maxfreq_idx+1),:] # ダンスの周波数帯のみ抜き出し
+    temp[maximal_idx,maximal_idy] = 1
+    temp = np.where(F_abs_cpu>peak_cut,1,0)*temp
+    temp2 = temp[(minfreq_idx-1):(maxfreq_idx+1),:]
     res[np.sum(temp2,axis=0) > 0] = 255
 
 
-# ピクセル単位のダンス候補からノイズを取り除いてオブジェクト（クランプ）化
+# Clump candidate pixcels
 def clump_DancePix(nframe):
-    # ダンス候補マップを二元配列に戻してノイズ除去
     img = res.reshape([rsheight,rswidth])
-    img = cv2.medianBlur(img,3) #ごま塩ノイズの除去
-    # フレーム分割ごとにダンスピクセルをオブジェクト（クランプ）化
+    img = cv2.medianBlur(img,3) #remove noise
     nLabel, labelImage, stats, centroids = cv2.connectedComponentsWithStats(img)
     listNLabels[nframe] = nLabel
     cent_x[nframe,0:nLabel] = centroids[:,0]
@@ -82,23 +67,21 @@ def clump_DancePix(nframe):
     return img, labelImage, stats
 
 
-# 前後のフレーム分割で連続したダンスがあるか確認し、連続している場合には同一のダンス番号を付与
+# Dance continuity ckeck
 def check_DanceContinuity(nframe,count,labelimg0,labelimg1):
     for label in range(1, listNLabels[nframe-1]):
-        tmp = np.max(labelimg1[labelimg0 == label]) # 一つ前のオブジェクト内にある次のオブジェクト番号（複数あることもあるので一番大きいオブジェクト番号を割り当て）
+        tmp = np.max(labelimg1[labelimg0 == label])
         if(tmp > 0): 
-            # 一つ前のフレーム分割でダンス番号がついていない場合、新たなダンス番号を付与
             if(connectF[nframe-1,label] < 1):
                 count += 1
                 connectF[nframe,tmp] = count
                 connectF[nframe-1,label] = count
-            # 一つ前のフレーム分割でダンス番号がついている場合、その番号を継承
             else:
                 connectF[nframe,tmp] = connectF[nframe-1,label]
     return count
 
 
-# ダンス候補ごとに継続時間、始点と終点を計算
+# Calc dance duration
 def calc_DanceInfo(count):
     for i in range(1,count+1):
         crow,ccol = np.where(connectF == i)
@@ -112,7 +95,7 @@ def calc_DanceInfo(count):
         end_centy[i-1] = cent_y[endF[i-1],endLabel]
 
 
-# 許容距離とフレーム数に応じて一つのダンスが細切れになっている場合を修復
+# Connect segmented waggle run
 def connect_DanceGap(count):
     for i in range(0,count-1):
         for j in range(1,count-i):
@@ -132,14 +115,14 @@ def connect_DanceGap(count):
 
 # Sun azimuth calculation
 def SunAzimuth(sec):
-    obloc = EarthLocation(lat=oblat*u.deg,lon=oblon*u.deg) # 観測地点の座標をAstropyで使う変数型に格納
-    ttemp = datetime.datetime.fromtimestamp(sec,datetime.timezone.utc) # 汎プラットフォームな方法？
+    obloc = EarthLocation(lat=oblat*u.deg,lon=oblon*u.deg)
+    ttemp = datetime.datetime.fromtimestamp(sec,datetime.timezone.utc)
     t = Time(ttemp)
     sunloc = get_sun(t).transform_to(AltAz(obstime=t,location=obloc))
     return sunloc.az.degree
 
 
-# 最終出力
+# Output
 def output_DanceInfo(count,fcsvname,fhtmlname):
     f = open(fcsvname, 'w')
     f.writelines('danceID,Frame.start,Frame.end,Duration,X.start,Y.start,X.end,Y.end,Angle2Sun,SunAzimuth,DirectionfromN,Distance,Easting_UTM,Northing_UTM,Longitude,Latitude\n')
@@ -150,13 +133,13 @@ def output_DanceInfo(count,fcsvname,fhtmlname):
         )
     folium.TileLayer(
         tiles='https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
-        name='国土地理院 標準地図',
-        attr="<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>国土地理院 地理院タイル</a>"
+        name='Japan Topo mapu',
+        attr="<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>GSI-J tiles</a>"
         ).add_to(m)
     folium.TileLayer(
         tiles='https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
-        name='国土地理院 全国最新写真（シームレス）',
-        attr="<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>国土地理院 地理院タイル</a>"
+        name='Japan latest aerial photos',
+        attr="<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>GSI-J tiles</a>"
         ).add_to(m)
     folium.Marker(
         location=[oblat,oblon],
@@ -193,11 +176,10 @@ def output_DanceInfo(count,fcsvname,fhtmlname):
     return fincount
 
 
-# メイン
+# Main procedure
 def main():
     nframe = 0
     count = 0
-    fvideoname = videoprefix + now.strftime('_%Y%m%d_%H%M%S') + '.mp4'
     fcsvname = fprefix + now.strftime('_%Y%m%d_%H%M%S') + '.csv'
     fhtmlname = fprefix + now.strftime('_%Y%m%d_%H%M%S') + ".html"
 
@@ -205,44 +187,30 @@ def main():
     if not video.isOpened():
         sys.exit(1)
     
-    out = cv2.VideoWriter(gst_out(fvideoname), cv2.CAP_GSTREAMER, 0, fps, (rswidth, rsheight), isColor=False)
-
     for skip in trange(0, frame_count, N):
-        #フーリエ変換するNフレームを読込
         for i in range(N):
             ret, frame = video.read()
-            if not ret:
-                frame = np.zeros((rswidth,rsheight),dtype = np.uint8)
             dat[i,:] = frame.reshape(-1)
-            out.write(frame)
 
-        # フーリエ変換してダンスピクセルの抽出
         calc_fft()
 
-        # ピクセル単位のダンス候補からノイズを取り除いてオブジェクト（クランプ）化
         img, labelImage, stats = clump_DancePix(nframe)
 
-        if nframe < 1: # 最初のフレーム分割はオブジェクト化したダンス候補マップを退避
+        if nframe < 1:
             labelimg0 = labelImage
-        else: # ２番目以降のフレーム分割から連続してダンス候補が現れるかチェック
+        else:
             labelimg1 = labelImage
-            # 連続する2フレーム分割でダンス候補が継続して確認できる場合、同一のダンスIDを付与
             count = check_DanceContinuity(nframe,count,labelimg0,labelimg1)
             labelimg0 = labelimg1
 
-        # フーリエ変換した分割フレーム数の増加
         nframe += 1
 
     video.release()
-    out.release()
 
-    # ダンス候補ごとに継続時間、始点と終点を計算
     calc_DanceInfo(count)
 
-    # １フレーム分割欠損していて一つのダンスが細切れになっている場合を修復
     connect_DanceGap(count)
     
-    # 最終のダンス情報を出力
     fincount = output_DanceInfo(count,fcsvname,fhtmlname)
     print('Number of waggle run detected: '+str(fincount))
 
@@ -256,7 +224,6 @@ if __name__ == '__main__':
     rsratio = args.rs
     oblat = args.lat
     oblon = args.lon
-    videoprefix = args.video
     fprefix = args.prefix
     peak_cut = args.peakcut
     
@@ -264,7 +231,7 @@ if __name__ == '__main__':
     rsheight = int(height/rsratio)
 
     fps = 120/1 # Frame per second
-    N = 20 # FFTのフレーム数
+    N = 20 # Num of frames for FFT
     frame_count = int(fps*60*duration)
 
     CONNECTMXDIST = 3.0 # Distance threshold for connecting waggle run gap (pixcel value in reshape image)
@@ -277,14 +244,13 @@ if __name__ == '__main__':
     else:
         utmepsg = 32700 + utmzone
     geoepsg = 4326 # WGS84 geographical
-    # Preparation for geocoordination
+
     geo_srs = osr.SpatialReference()
     utm_srs = osr.SpatialReference()
     geo_srs.ImportFromEPSG(geoepsg)
     utm_srs.ImportFromEPSG(utmepsg)
     trans_geo2utm = osr.CoordinateTransformation(geo_srs, utm_srs)
     trans_utm2geo = osr.CoordinateTransformation(utm_srs, geo_srs)
-    # UTM location of the hive
     obloc_utm = trans_geo2utm.TransformPoint(oblon, oblat) # Be careful! the order lon/lat changed from gdal v3.
     
     # Distance estimation parameters from von Frisch and Jander (1957) after recalculation by Kohl and Rutschmann (2021)
@@ -298,28 +264,25 @@ if __name__ == '__main__':
     d = 0.7198
     e = 0.70947
 
-    # ミツバチダンスのターゲット周波数帯
-    freq = np.linspace(0, fps, N) # 周波数軸
-    minfreq, maxfreq = 10, 16 # ミツバチダンスの周波数帯(Hz)
+    freq = np.linspace(0, fps, N)
+    minfreq, maxfreq = 10, 16 # Waggling frequency
     targetfreq = np.where((freq > minfreq) & (freq < maxfreq))
     minfreq_idx = np.amin(targetfreq)
     maxfreq_idx = np.amax(targetfreq)    
 
-    dat = np.zeros((N,rswidth*rsheight),dtype = np.uint8) #フーリエ変換に使うフレームを格納する配列
-    res = np.zeros((rswidth*rsheight),dtype = np.uint8) #ダンス周波数帯にあるピクセルを格納する配列
+    dat = np.zeros((N,rswidth*rsheight),dtype = np.uint8)
+    res = np.zeros((rswidth*rsheight),dtype = np.uint8)
     
-    # GPUでFFTするためのテンプレート確保（これを使い回すと計算速度が増す）
+    # Template for GPU-accelerated FFT
     plan = cupyx.scipy.fftpack.get_fft_plan(cp.asarray(dat),axes=0)
 
     for rp in range(0,nloop):
-        # ダンス候補の一時格納変数
-        maxLabel = 512 #ダンス候補ピクセルをオブジェクト化したときの最大オブジェクト数（本当は可変にできるといいけど）
-        connectF = np.zeros((math.ceil(frame_count/N),maxLabel)) # ダンスIDを格納する配列
-        listNLabels = np.zeros(math.ceil(frame_count/N), dtype=np.uint8) # オブジェクト数を格納する配列
-        cent_x = np.zeros((math.ceil(frame_count/N),maxLabel)) # オブジェクトの重心座標xを格納する配列
-        cent_y = np.zeros((math.ceil(frame_count/N),maxLabel)) # オブジェクトの重心座標yを格納する配列
+        maxLabel = 1024
+        connectF = np.zeros((math.ceil(frame_count/N),maxLabel))
+        listNLabels = np.zeros(math.ceil(frame_count/N), dtype=np.uint8)
+        cent_x = np.zeros((math.ceil(frame_count/N),maxLabel))
+        cent_y = np.zeros((math.ceil(frame_count/N),maxLabel))
         
-        # arrays for final waggle run info
         maxrun = 1024
         beginF = np.zeros(maxrun,dtype = np.uint16)
         endF = np.zeros(maxrun,dtype = np.uint16)
