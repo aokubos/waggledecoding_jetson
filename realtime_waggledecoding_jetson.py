@@ -81,7 +81,7 @@ def check_DanceContinuity(nframe,count,labelimg0,labelimg1):
     return count
 
 
-# Calc dance duration
+# Reserve start and end waggle point
 def calc_DanceInfo(count):
     for i in range(1,count+1):
         crow,ccol = np.where(connectF == i)
@@ -133,7 +133,7 @@ def output_DanceInfo(count,fcsvname,fhtmlname):
         )
     folium.TileLayer(
         tiles='https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
-        name='Japan Topo mapu',
+        name='Japan Topo map',
         attr="<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>GSI-J tiles</a>"
         ).add_to(m)
     folium.TileLayer(
