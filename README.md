@@ -34,7 +34,7 @@ python3 -m pip install folium
 ```
 ### Install GDAL
 ```
-sudo apt-get install gdal-bin # not necessary?
+sudo apt-get install gdal-bin
 sudo apt-get install python3-gdal
 ```
 ### Install UVC camera controllor
@@ -44,6 +44,6 @@ sudo apt-get install v4l-utils
 
 ## Run
 ```
-python3 realtime_waggledecoding_jetson.py 15 --loop 4 # Execute 15 min decoding and repeat 4 times (1 h)
+python3 realtime_waggledecoding_jetson.py 15 --loop 4 # Execute 15 min decoding and repeat 4 times (total 1 h)
 ```
 Use `-h` to see options for setting hive location, threshold value, camera resolution and resize ratio, etc.
